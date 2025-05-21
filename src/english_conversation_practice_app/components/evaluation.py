@@ -75,7 +75,30 @@ EVALUATION_PROMPT = """
 - 回答「I like watching movies」→ meaning: 10点（全く関係ない応答）、overall: 30点以下
 
 【アドバイス】
-具体的に何が間違っていたか、どう改善すべきかを日本語で詳しく説明してください。特に意味が異なる場合は、その違いを明確に指摘してください。
+必ず日本語でアドバイスを提供してください。英語は使用しないでください。
+以下の点について具体的に説明してください：
+
+1. 発音の間違い：
+   - どの単語やフレーズの発音が間違っていたか具体的に指摘してください
+   - 正しい発音の仕方について簡潔に説明してください
+   - 例：「"price"の発音で"i"の音が短すぎます。"ai"と長めに発音しましょう」
+
+2. 文法の間違い：
+   - どの部分に文法ミスがあったか具体的に指摘してください
+   - 正しい文法形式を示してください
+   - 例：「"I going"は動詞の形が不適切です。"I am going"または"I go"が正しい形です」
+
+3. 語彙の選択：
+   - 不適切または改善できる語彙を特定してください
+   - より適切な言い回しや表現を提案してください
+   - 例：「"make a meeting"よりも"schedule a meeting"または"arrange a meeting"の方が自然です」
+
+4. 意味の伝達：
+   - ユーザーの回答と期待される回答の意味の違いを説明してください
+   - どうすれば意図した意味に近づけるか具体的に提案してください
+
+全体的な改善点をまとめ、次回の練習でどこに注意すべきかを明確に伝えてください。
+アドバイスは具体的かつ実用的で、学習者が直接応用できる内容にしてください。
 
 【返答フォーマット】
 {{
@@ -84,10 +107,17 @@ EVALUATION_PROMPT = """
   "vocabulary": 数値,
   "meaning": 数値,
   "overall": 数値,
-  "advice": "テキスト"
+  "advice": "※日本語で具体的なアドバイスを記入してください。例：
+「発音：単語Xの発音で〇〇の部分が不正確です。△△と発音するとよいでしょう。
+文法：『I am go』の部分が間違っています。正しくは『I am going』です。
+語彙：『make the document』という表現より『create the document』の方が適切です。
+意味：「〇〇してください」という依頼の意味が伝わっていません。『Could you please...』という表現を使うとよいでしょう。
+次回の練習では特に△△に注意して、〇〇のような表現を練習しましょう。」"
 }}
 
 JSONフォーマットのみを返してください。余計な説明は不要です。
+advice欄は必ず日本語で記述してください。
+コードブロック記号（```）やマークダウン形式は使用せず、生のJSONデータのみを返してください。
 """
 
 def evaluate_answer(japanese_text, reference_english, user_speech_text, api_key=None):
@@ -122,23 +152,41 @@ def evaluate_answer(japanese_text, reference_english, user_speech_text, api_key=
         )
         
         # OpenAI LLMの初期化
-        llm = ChatOpenAI(api_key=api_key, model_name="gpt-3.5-turbo")
+        llm = ChatOpenAI(
+            api_key=api_key, 
+            model_name="gpt-4o", 
+            temperature=0.2  # 低い温度で具体的な回答を促す
+        )
         
-        # チェーンの設定
-        chain = LLMChain(llm=llm, prompt=prompt)
+        # 最新のRunnableSequenceパターンを使用
+        chain = prompt | llm
         
         # 評価の実行
-        result = chain.run({
+        result = chain.invoke({
             "japanese_text": japanese_text,
             "reference_english": reference_english,
             "user_speech_text": user_speech_text
-        })
+        }).content
         
         # 結果をJSONに変換
         try:
-            evaluation = json.loads(result)
+            # APIの応答から余分なマークダウン記号などを削除
+            cleaned_result = result
+            # Markdownコードブロックの記号を削除
+            if "```json" in cleaned_result:
+                cleaned_result = cleaned_result.replace("```json", "").strip()
+            if "```" in cleaned_result:
+                cleaned_result = cleaned_result.replace("```", "").strip()
+            
+            # 前後の空白を削除
+            cleaned_result = cleaned_result.strip()
+            
+            # デバッグ情報
+            # st.write(f"クリーニング後のJSON: {cleaned_result}")
+            
+            evaluation = json.loads(cleaned_result)
             return evaluation
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as json_err:
             # JSONデコードに失敗した場合
             return {
                 "pronunciation": 0,
@@ -146,7 +194,7 @@ def evaluate_answer(japanese_text, reference_english, user_speech_text, api_key=
                 "vocabulary": 0,
                 "meaning": 0,
                 "overall": 0,
-                "advice": f"評価結果のフォーマットエラー。APIの応答: {result}"
+                "advice": f"評価結果のフォーマットエラー。APIの応答: {result}\nエラー詳細: {str(json_err)}"
             }
         
     except Exception as e:
